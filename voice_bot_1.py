@@ -4,15 +4,21 @@ import streamlit as st
 from PyPDF2 import PdfReader
 import docx
 import numpy as np
+from dotenv import load_dotenv
 
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct
 import uuid
 
+load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
-qdrant = QdrantClient(":memory:")
+
+qdrant = QdrantClient(
+    url=os.getenv("QDRANT_URL"),
+    api_key=os.getenv("QDRANT_API_KEY")
+)
 
 def setup_qdrant():
     qdrant.recreate_collection(
@@ -23,12 +29,12 @@ def setup_qdrant():
     )
 )
     
-def upload_to_qdrant(chunks, embeddings):
+def upload_to_qdrant(chunks, embeddings, document_name):
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=embedding,
-            payload={"text": chunk}
+            vector=embedding.tolist() if isinstance(embedding, np.ndarray) else embedding,
+            payload={"text": chunk, "document_name": document_name}
         )
         for chunk, embedding in zip(chunks, embeddings)
     ]
@@ -38,27 +44,56 @@ def upload_to_qdrant(chunks, embeddings):
         points=points
     )
 
-
 def search_qdrant(question, top_k=5):
+    # 1️⃣ Skapa embedding för frågan
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=question
     )
-    query_embedding = response.data[0].embedding
+    query_embedding = np.array(response.data[0].embedding, dtype=float)
+    print(f"\nQuery embedding length: {len(query_embedding)} Sample: {query_embedding[:5]}")  # DEBUG
 
-    results = qdrant.query_points(
+    # 2️⃣ Hämta alla points från Qdrant
+    scroll_response = qdrant.scroll(
         collection_name="documents",
-        prefetch=[],
-        query=query_embedding,
-        limit=top_k
+        limit=1000,
+        with_vectors=True
     )
+    points = scroll_response[0]  # själva listan med points
 
-    texts = []
-    for matches in results.points:
-        texts.append(matches.payload["text"])
+    print(f"Number of points fetched: {len(points)}")  # DEBUG
 
-    
-    return texts
+    # 3️⃣ Filtrera bort points utan vector och plocka ut text och document_name
+    valid_points = [
+        (np.array(point.vector, dtype=float), point.payload.get("text", ""), point.payload.get("document_name", "Okänt dokument"))
+        for point in points
+        if point.vector is not None
+    ]
+    print(f"Valid points with vectors: {len(valid_points)}")  # DEBUG
+
+    # 4️⃣ Beräkna cosine similarity mellan frågan och varje chunk
+    similarities = []
+    for vec, text, doc_name in valid_points:
+        sim = np.dot(query_embedding, vec) / (np.linalg.norm(query_embedding) * np.linalg.norm(vec))
+        print(f"Similarity for document '{doc_name}': {sim:.4f} Text start: {text[:50]}")  # DEBUG
+        similarities.append((sim, text, doc_name))
+
+    # 5️⃣ Sortera på högsta likhet
+    similarities.sort(reverse=True, key=lambda x: x[0])
+
+    # 6️⃣ Returnera top-k mest relevanta
+    top_chunks = [{"text": text, "document_name": doc_name} for _, text, doc_name in similarities[:top_k]]
+
+    print("\nTop-k matches returned:")
+    for i, chunk in enumerate(top_chunks):
+        print(f"{i+1}: {chunk['document_name']} | {chunk['text'][:50]}")
+
+    return top_chunks
+
+
+
+
+
 
 def read_file(file):
     text = ""
@@ -100,7 +135,16 @@ def create_embeddings(chunks, client):
 
 
 def ask_ai(question, relevant_chunks):
-    context = "\n\n".join(relevant_chunks)
+    context_chunks = [
+        f"[{chunk['document_name']}] {chunk['text']}" 
+        for chunk in relevant_chunks 
+        if chunk["text"].strip() != ""
+    ]
+    
+    if not context_chunks:
+        return "Inga relevanta textbitar hittades i dokumentet."
+
+    context = "\n\n".join(context_chunks)
     
     response = client.chat.completions.create(
     model="gpt-4.1-nano-2025-04-14",
@@ -125,7 +169,7 @@ if uploaded_file:
     embeddings = create_embeddings(chunks, client)
 
     setup_qdrant()
-    upload_to_qdrant(chunks, embeddings)
+    upload_to_qdrant(chunks, embeddings, uploaded_file.name)
 
     st.session_state.chunks = chunks
     st.session_state.embeddings = embeddings
@@ -139,6 +183,9 @@ if uploaded_file:
 
     if st.button("Send") and question:
         relevants_chunks = search_qdrant(question)
+        for i in relevants_chunks:
+            print(i["document_name"], i["text"])
+
         answer = ask_ai(question, relevants_chunks)
 
         st.session_state.chat_history.append({"user": question, "bot": answer})
