@@ -5,6 +5,7 @@ from PyPDF2 import PdfReader
 import docx
 import numpy as np
 from dotenv import load_dotenv
+import base64
 
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -115,7 +116,17 @@ def search_qdrant(question, top_k=5):
 """
 
 
+def autoplay_audio(file_path):
+    with open(file_path, "rb") as f:
+        audio_bytes = f.read()
+    b64 = base64.b64encode(audio_bytes).decode()
 
+    audio_html = f"""
+    <audio autoplay>
+        <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+    </audio>
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
 
 
 def read_file(file):
@@ -209,7 +220,7 @@ if uploaded_file:
         print("NYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", relevants_chunks)
 
         answer = ask_ai(question, relevants_chunks, speech_file_path)
-        st.audio(speech_file_path)
+        autoplay_audio(speech_file_path)
 
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
