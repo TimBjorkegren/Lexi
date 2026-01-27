@@ -45,6 +45,29 @@ def upload_to_qdrant(chunks, embeddings, document_name):
     )
 
 def search_qdrant(question, top_k=5):
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=question
+    )
+    query_embedding = response.data[0].embedding
+
+    results = qdrant.query_points(
+        collection_name="documents",
+        prefetch=[],
+        query=query_embedding,
+        limit=top_k
+    )
+
+    texts = []
+    for matches in results.points:
+        texts.append(matches.payload["text"])
+
+    
+    return texts
+
+
+"""
+def search_qdrant(question, top_k=5):
     # 1️⃣ Skapa embedding för frågan
     response = client.embeddings.create(
         model="text-embedding-3-small",
@@ -89,7 +112,7 @@ def search_qdrant(question, top_k=5):
         print(f"{i+1}: {chunk['document_name']} | {chunk['text'][:50]}")
 
     return top_chunks
-
+"""
 
 
 
@@ -135,22 +158,11 @@ def create_embeddings(chunks, client):
 
 
 def ask_ai(question, relevant_chunks):
-    context_chunks = [
-        f"[{chunk['document_name']}] {chunk['text']}" 
-        for chunk in relevant_chunks 
-        if chunk["text"].strip() != ""
-    ]
-    
-    if not context_chunks:
-        return "Inga relevanta textbitar hittades i dokumentet."
-
-    context = "\n\n".join(context_chunks)
-    
     response = client.chat.completions.create(
     model="gpt-4.1-nano-2025-04-14",
     messages= [
         {"role": "system", "content": "Du är en hjälpsam AI-assistent. Svara endast baserat på informationen som skickas i användarmeddelandet."},
-        {"role": "user", "content": f"KONTEXT:\n{context}\n\nFRÅGA:\n{question}"}
+        {"role": "user", "content": f"KONTEXT:\n{relevant_chunks}\n\nFRÅGA:\n{question}"}
         ],
         max_tokens=500
     )
@@ -183,8 +195,7 @@ if uploaded_file:
 
     if st.button("Send") and question:
         relevants_chunks = search_qdrant(question)
-        for i in relevants_chunks:
-            print(i["document_name"], i["text"])
+        print("NYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", relevants_chunks)
 
         answer = ask_ai(question, relevants_chunks)
 
