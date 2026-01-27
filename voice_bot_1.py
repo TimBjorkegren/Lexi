@@ -155,9 +155,9 @@ def create_embeddings(chunks, client):
         embeddings.append(response.data[0].embedding)
     return embeddings
 
+speech_file_path = "output.wav"
 
-
-def ask_ai(question, relevant_chunks):
+def ask_ai(question, relevant_chunks, speech_file_path):
     response = client.chat.completions.create(
     model="gpt-4.1-nano-2025-04-14",
     messages= [
@@ -166,7 +166,18 @@ def ask_ai(question, relevant_chunks):
         ],
         max_tokens=500
     )
-    return response.choices[0].message.content
+
+    response_tts = response.choices[0].message.content
+
+    with client.audio.speech.with_streaming_response.create(
+    model="gpt-4o-mini-tts",
+    voice="coral",
+    input=response_tts,
+    instructions="Speak in a cheerful and positive tone.",
+    ) as tts_response:
+        tts_response.stream_to_file(speech_file_path)
+
+    return response_tts
 
 
 st.title("Dokument chattbott")
@@ -197,7 +208,8 @@ if uploaded_file:
         relevants_chunks = search_qdrant(question)
         print("NYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", relevants_chunks)
 
-        answer = ask_ai(question, relevants_chunks)
+        answer = ask_ai(question, relevants_chunks, speech_file_path)
+        st.audio(speech_file_path)
 
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
