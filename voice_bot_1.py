@@ -46,14 +46,15 @@ def search_qdrant(question, top_k=5):
     )
     query_embedding = response.data[0].embedding
 
-    results = qdrant.search(
+    results = qdrant.query_points(
         collection_name="documents",
-        query_vector=query_embedding,
+        prefetch=[],
+        query=query_embedding,
         limit=top_k
     )
 
     texts = []
-    for matches in results:
+    for matches in results.points:
         texts.append(matches.payload["text"])
 
     
