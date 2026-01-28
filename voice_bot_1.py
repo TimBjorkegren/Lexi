@@ -6,6 +6,7 @@ import docx
 import numpy as np
 from dotenv import load_dotenv
 import base64
+import tempfile
 
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -148,6 +149,18 @@ def read_file(file):
 
     return text
 
+def speech_to_text(audio_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(audio_file.getvalue())
+        tmp_path = tmp.name
+
+    with open(tmp_path, "rb") as f:
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=f
+        )
+    return transcript.text
+
 
 def chunk_text(text, chunksize=800):
     chunks = []
@@ -212,8 +225,26 @@ if uploaded_file:
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    
+    if "last_audio_bytes" not in st.session_state:
+        st.session_state.last_audio_bytes = None
+
+    audio = st.audio_input("Ställ en fråga genom mikrofon")
     question = st.text_input("Ställ en fråga angående dokumentet")
+
+    if audio is not None:
+       current_audio_bytes = audio.getvalue()
+
+       if current_audio_bytes != st.session_state.last_audio_bytes:
+           st.session_state.last_audio_bytes = current_audio_bytes
+
+           question = speech_to_text(audio)
+           relevants_chunks = search_qdrant(question)
+           answer = ask_ai(question, relevants_chunks, speech_file_path)
+           autoplay_audio(speech_file_path)
+
+           st.session_state.chat_history.append(
+               {"user": question, "bot": answer}
+           )
 
     if st.button("Send") and question:
         relevants_chunks = search_qdrant(question)
