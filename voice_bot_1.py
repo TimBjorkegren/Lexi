@@ -22,6 +22,10 @@ qdrant = QdrantClient(
     api_key=os.getenv("QDRANT_API_KEY")
 )
 
+speech_file_path = "output.wav"
+
+# ------------------------------------QDRANT-------------------------
+
 def setup_qdrant():
     qdrant.recreate_collection(
     collection_name="documents",
@@ -67,68 +71,7 @@ def search_qdrant(question, top_k=5):
     
     return texts
 
-
-"""
-def search_qdrant(question, top_k=5):
-    # 1️⃣ Skapa embedding för frågan
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=question
-    )
-    query_embedding = np.array(response.data[0].embedding, dtype=float)
-    print(f"\nQuery embedding length: {len(query_embedding)} Sample: {query_embedding[:5]}")  # DEBUG
-
-    # 2️⃣ Hämta alla points från Qdrant
-    scroll_response = qdrant.scroll(
-        collection_name="documents",
-        limit=1000,
-        with_vectors=True
-    )
-    points = scroll_response[0]  # själva listan med points
-
-    print(f"Number of points fetched: {len(points)}")  # DEBUG
-
-    # 3️⃣ Filtrera bort points utan vector och plocka ut text och document_name
-    valid_points = [
-        (np.array(point.vector, dtype=float), point.payload.get("text", ""), point.payload.get("document_name", "Okänt dokument"))
-        for point in points
-        if point.vector is not None
-    ]
-    print(f"Valid points with vectors: {len(valid_points)}")  # DEBUG
-
-    # 4️⃣ Beräkna cosine similarity mellan frågan och varje chunk
-    similarities = []
-    for vec, text, doc_name in valid_points:
-        sim = np.dot(query_embedding, vec) / (np.linalg.norm(query_embedding) * np.linalg.norm(vec))
-        print(f"Similarity for document '{doc_name}': {sim:.4f} Text start: {text[:50]}")  # DEBUG
-        similarities.append((sim, text, doc_name))
-
-    # 5️⃣ Sortera på högsta likhet
-    similarities.sort(reverse=True, key=lambda x: x[0])
-
-    # 6️⃣ Returnera top-k mest relevanta
-    top_chunks = [{"text": text, "document_name": doc_name} for _, text, doc_name in similarities[:top_k]]
-
-    print("\nTop-k matches returned:")
-    for i, chunk in enumerate(top_chunks):
-        print(f"{i+1}: {chunk['document_name']} | {chunk['text'][:50]}")
-
-    return top_chunks
-"""
-
-
-def autoplay_audio(file_path):
-    with open(file_path, "rb") as f:
-        audio_bytes = f.read()
-    b64 = base64.b64encode(audio_bytes).decode()
-
-    audio_html = f"""
-    <audio autoplay>
-        <source src="data:audio/wav;base64,{b64}" type="audio/wav">
-    </audio>
-    """
-    st.markdown(audio_html, unsafe_allow_html=True)
-
+# --------------------------------------FILE---------------------------------
 
 def read_file(file):
     text = ""
@@ -149,18 +92,6 @@ def read_file(file):
 
     return text
 
-def speech_to_text(audio_file):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(audio_file.getvalue())
-        tmp_path = tmp.name
-
-    with open(tmp_path, "rb") as f:
-        transcript = client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=f
-        )
-    return transcript.text
-
 
 def chunk_text(text, chunksize=800):
     chunks = []
@@ -179,13 +110,41 @@ def create_embeddings(chunks, client):
         embeddings.append(response.data[0].embedding)
     return embeddings
 
-speech_file_path = "output.wav"
+# -------------------------------------------AUDIO----------------------------
+
+def autoplay_audio(file_path):
+    with open(file_path, "rb") as f:
+        audio_bytes = f.read()
+    b64 = base64.b64encode(audio_bytes).decode()
+
+    audio_html = f"""
+    <audio autoplay>
+        <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+    </audio>
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
+
+
+
+def speech_to_text(audio_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(audio_file.getvalue())
+        tmp_path = tmp.name
+
+    with open(tmp_path, "rb") as f:
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=f
+        )
+    return transcript.text
+
+# --------------------------------AI------------------------------------
 
 def ask_ai(question, relevant_chunks, speech_file_path):
     response = client.chat.completions.create(
     model="gpt-4.1-nano-2025-04-14",
     messages= [
-        {"role": "system", "content": "Du är en hjälpsam AI-assistent. Svara endast baserat på informationen som skickas i användarmeddelandet."},
+        {"role": "system", "content": f"Du är en hjälpsam {role}. Svara endast baserat på informationen som skickas i användarmeddelandet."},
         {"role": "user", "content": f"KONTEXT:\n{relevant_chunks}\n\nFRÅGA:\n{question}"}
         ],
         max_tokens=500
@@ -203,11 +162,15 @@ def ask_ai(question, relevant_chunks, speech_file_path):
 
     return response_tts
 
-
+# ---------------------------------UI-----------------------------
 st.title("Dokument chattbott")
 st.write("Ladda upp ett dokument och fråga om innehållet")
 
 uploaded_file = st.file_uploader("Välj fil format", type=["txt", "pdf", "docx"])
+
+role = st.selectbox(
+    "Välj en roll för AI:n", ["Lärare", "Jurist", "Detektiv", "Sammanfattare"]
+)
 
 if uploaded_file:
     document_text = read_file(uploaded_file)
@@ -220,7 +183,7 @@ if uploaded_file:
 
     st.session_state.chunks = chunks
     st.session_state.embeddings = embeddings
-    st.success("File was successfully uploaded")
+    #st.success("File was successfully uploaded")
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
@@ -229,7 +192,8 @@ if uploaded_file:
         st.session_state.last_audio_bytes = None
 
     audio = st.audio_input("Ställ en fråga genom mikrofon")
-    question = st.text_input("Ställ en fråga angående dokumentet")
+    #question = st.text_input("Ställ en fråga angående dokumentet", key="question_input", on_change=clear_input)
+
 
     if audio is not None:
        current_audio_bytes = audio.getvalue()
@@ -246,9 +210,12 @@ if uploaded_file:
                {"user": question, "bot": answer}
            )
 
-    if st.button("Send") and question:
+    with st.form("ask_form", clear_on_submit=True):
+        question = st.text_input("Ställ en fråga angående dokumentet", key="question_input")
+        send_button = st.form_submit_button("Send")
+
+    if send_button and question:
         relevants_chunks = search_qdrant(question)
-        print("NYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", relevants_chunks)
 
         answer = ask_ai(question, relevants_chunks, speech_file_path)
         autoplay_audio(speech_file_path)
@@ -256,44 +223,53 @@ if uploaded_file:
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
 
-    for chat in st.session_state.chat_history:
-        st.markdown(
-        f"""
-        <div style="
-            display: flex;
-            justify-content: flex-end;
-            margin-bottom: 10px;
-        ">
-            <div style="
-                background-color: #555555;
-                padding: 10px 15px;
-                border-radius: 15px;
-                max-width: 70%;
-                word-wrap: break-word;
-            ">
-                <strong>You:</strong> {chat['user']}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-        st.markdown(
-        f"""
-        <div style="
-            display: flex;
-            justify-content: flex-start;
-            margin-bottom: 10px;
-        ">
-            <div style="
-                background-color: #0b3d91;
-                padding: 10px 15px;
-                border-radius: 15px;
-                max-width: 70%;
-                word-wrap: break-word;
-            ">
-                <strong>Lexa:</strong> {chat['bot']}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+# Exempel chat_history
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# CSS för chattruta
+st.markdown(
+    """
+    <style>
+    .chat-container {
+        border: 2px solid #ccc;
+        border-radius: 10px;
+        padding: 10px;
+        height: 400px;
+        overflow-y: auto;
+        background-color: transparent;
+    }
+    .user-msg {
+        background-color: #555555;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 15px;
+        max-width: 70%;
+        word-wrap: break-word;
+        margin-left: auto;
+        margin-bottom: 10px;
+    }
+    .bot-msg {
+        background-color: #0b3d91;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 15px;
+        max-width: 70%;
+        word-wrap: break-word;
+        margin-right: auto;
+        margin-bottom: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Bygg hela chatten som en HTML-sträng
+chat_html = '<div class="chat-container">'
+for chat in st.session_state.chat_history:
+    chat_html += f'<div class="user-msg"><strong>You:</strong> {chat["user"]}</div>'
+    chat_html += f'<div class="bot-msg"><strong>Lexa:</strong> {chat["bot"]}</div>'
+chat_html += '</div>'
+
+# Rendera all chat på en gång
+st.markdown(chat_html, unsafe_allow_html=True)
