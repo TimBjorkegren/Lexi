@@ -52,7 +52,7 @@ def upload_to_qdrant(chunks, embeddings, document_name):
     ]
 
     qdrant.upsert(
-        collection_name=document_name,
+        collection_name=""document_name"",
         points=points
     )
 
