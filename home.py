@@ -7,15 +7,14 @@ import numpy as np
 from dotenv import load_dotenv
 import base64
 import tempfile
-
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct
 import uuid
 
+
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
-
 
 qdrant = QdrantClient(
     url=os.getenv("QDRANT_URL"),
@@ -24,16 +23,23 @@ qdrant = QdrantClient(
 
 speech_file_path = "output.wav"
 
-# ------------------------------------QDRANT-------------------------
+# QDRANT
 
-def setup_qdrant():
-    qdrant.recreate_collection(
-    collection_name="documents",
-    vectors_config= VectorParams(
-        size=1536,
-        distance=Distance.COSINE
-    )
-)
+def does_collection_exist(collection_name):
+    collections = qdrant.get_collections().collections
+    existing = [c.name for c in collections]
+    if collection_name not in existing:
+        qdrant.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(
+                size=1536,
+                distance=Distance.COSINE
+            )
+        )
+
+def collection_name_from_file(filename):
+    name = filename.lower().replace(" ", "_").replace(".", "_")
+    return f"doc_{name}"
     
 def upload_to_qdrant(chunks, embeddings, document_name):
     points = [
@@ -50,7 +56,7 @@ def upload_to_qdrant(chunks, embeddings, document_name):
         points=points
     )
 
-def search_qdrant(question, top_k=5):
+def search_qdrant(question, collection_name, top_k=5):
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=question
@@ -58,7 +64,7 @@ def search_qdrant(question, top_k=5):
     query_embedding = response.data[0].embedding
 
     results = qdrant.query_points(
-        collection_name="documents",
+        collection_name=collection_name,
         prefetch=[],
         query=query_embedding,
         limit=top_k
@@ -71,7 +77,7 @@ def search_qdrant(question, top_k=5):
     
     return texts
 
-# --------------------------------------FILE---------------------------------
+# FILE
 
 def read_file(file):
     text = ""
@@ -85,11 +91,8 @@ def read_file(file):
         doc = docx.Document(file)
         for para in doc.paragraphs:
             text += para.text + "\n"
-    
     else:
         st.error("Filformatet stöds inte!")
-
-
     return text
 
 
@@ -206,73 +209,73 @@ def ask_ai(question, relevant_chunks, speech_file_path):
     instructions="Speak in a cheerful and positive tone.",
     ) as tts_response:
         tts_response.stream_to_file(speech_file_path)
-
     return response_tts
 
 # ---------------------------------UI-----------------------------
 st.title("Dokument chattbott")
 st.write("Ladda upp ett dokument och fråga om innehållet")
 
-uploaded_file = st.file_uploader("Välj fil format", type=["txt", "pdf", "docx"])
+if "chat_history" not in st.session_state: st.session_state.chat_history = []
+if "last_audio_bytes" not in st.session_state: st.session_state.last_audio_bytes = None
+if "last_uploaded_collection" not in st.session_state: st.session_state.last_uploaded_collection = None
 
-role = st.selectbox(
-    "Välj en roll för AI:n", ["Lärare", "Jurist", "Detektiv", "Sammanfattare"]
-)
+collections = qdrant.get_collections().collections
+collection_names = [c.name for c in collections if c.name.startswith("doc_")]
+
+uploaded_file = st.file_uploader("Välj fil format", type=["txt", "pdf", "docx"])
+role = st.selectbox("Välj en roll för AI:n", ["Lärare", "Jurist", "Detektiv", "Sammanfattare"])
 
 if uploaded_file:
     document_text = read_file(uploaded_file)
-
     chunks = chunk_text(document_text)
     embeddings = create_embeddings(chunks, client)
+    collection_name = collection_name_from_file(uploaded_file.name)
+    does_collection_exist(collection_name)
+    upload_to_qdrant(chunks, embeddings, collection_name)
 
-    setup_qdrant()
-    upload_to_qdrant(chunks, embeddings, uploaded_file.name)
-
+    st.session_state.last_uploaded_collection = collection_name
     st.session_state.chunks = chunks
     st.session_state.embeddings = embeddings
-    #st.success("File was successfully uploaded")
+    
+# SELECTBOX
+    selected_index = 0
+    if st.session_state.last_uploaded_collection in collection_names:
+        selected_index = collection_names.index(st.session_state.last_uploaded_collection)
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    selected_collection = st.selectbox(
+    "Välj ett dokument som redan är uppladdat",
+    collection_names,
+    index=selected_index,
+    key="selected_collection"
+    )
 
-    if "last_audio_bytes" not in st.session_state:
-        st.session_state.last_audio_bytes = None
-
+#AUDIO INPUT
     audio = st.audio_input("Ställ en fråga genom mikrofon")
-    #question = st.text_input("Ställ en fråga angående dokumentet", key="question_input", on_change=clear_input)
-
-
     if audio is not None:
        current_audio_bytes = audio.getvalue()
 
        if current_audio_bytes != st.session_state.last_audio_bytes:
            st.session_state.last_audio_bytes = current_audio_bytes
-
            question = speech_to_text(audio)
-           relevants_chunks = search_qdrant(question)
-           answer = ask_ai(question, relevants_chunks, speech_file_path)
+           relevant_chunks = search_qdrant(question, selected_collection)
+           answer = ask_ai(question, relevant_chunks, speech_file_path)
            autoplay_audio_with_bubble(speech_file_path)
 
            st.session_state.chat_history.append(
                {"user": question, "bot": answer}
            )
 
+#TEXT INPUT
     with st.form("ask_form", clear_on_submit=True):
         question = st.text_input("Ställ en fråga angående dokumentet", key="question_input")
         send_button = st.form_submit_button("Send")
 
     if send_button and question:
-        relevants_chunks = search_qdrant(question)
-
+        relevants_chunks = search_qdrant(question, selected_collection)
         answer = ask_ai(question, relevants_chunks, speech_file_path)
         autoplay_audio_with_bubble(speech_file_path)
-
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
-
-# Exempel chat_history
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
 
 # CSS för chattruta
 st.markdown(
@@ -311,12 +314,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Bygg hela chatten som en HTML-sträng
 chat_html = '<div class="chat-container">'
 for chat in st.session_state.chat_history:
     chat_html += f'<div class="user-msg"><strong>You:</strong> {chat["user"]}</div>'
     chat_html += f'<div class="bot-msg"><strong>Lexa:</strong> {chat["bot"]}</div>'
 chat_html += '</div>'
-
-# Rendera all chat på en gång
 st.markdown(chat_html, unsafe_allow_html=True)
