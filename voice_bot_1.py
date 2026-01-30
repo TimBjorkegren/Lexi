@@ -112,17 +112,64 @@ def create_embeddings(chunks, client):
 
 # -------------------------------------------AUDIO----------------------------
 
-def autoplay_audio(file_path):
+def autoplay_audio_with_bubble(file_path):
     with open(file_path, "rb") as f:
         audio_bytes = f.read()
     b64 = base64.b64encode(audio_bytes).decode()
 
-    audio_html = f"""
-    <audio autoplay>
-        <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+    html = f"""
+    <style>
+      .bubble {{
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #6fb1ff, #1e3c72);
+        margin: 20px auto;
+        transition: transform 0.05s linear;
+        box-shadow: 0 0 20px rgba(0,123,255,0.6);
+      }}
+    </style>
+
+    <div class="bubble" id="bubble"></div>
+
+    <audio id="audio" autoplay>
+      <source src="data:audio/wav;base64,{b64}" type="audio/wav">
     </audio>
+
+    <script>
+      const audio = document.getElementById("audio");
+      const bubble = document.getElementById("bubble");
+
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioContext();
+      const source = ctx.createMediaElementSource(audio);
+      const analyser = ctx.createAnalyser();
+
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyser.connect(ctx.destination);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      function animate() {{
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {{
+          sum += dataArray[i];
+        }}
+        let volume = sum / dataArray.length;
+        let scaleVal = 1 + volume / 300;
+        bubble.style.transform = "scale(" + scaleVal + ")";
+        requestAnimationFrame(animate);
+      }}
+
+      audio.onplay = () => {{
+        if (ctx.state === "suspended") ctx.resume();
+        animate();
+      }};
+    </script>
     """
-    st.markdown(audio_html, unsafe_allow_html=True)
+    st.components.v1.html(html, height=130)
 
 
 
@@ -204,7 +251,7 @@ if uploaded_file:
            question = speech_to_text(audio)
            relevants_chunks = search_qdrant(question)
            answer = ask_ai(question, relevants_chunks, speech_file_path)
-           autoplay_audio(speech_file_path)
+           autoplay_audio_with_bubble(speech_file_path)
 
            st.session_state.chat_history.append(
                {"user": question, "bot": answer}
@@ -218,7 +265,7 @@ if uploaded_file:
         relevants_chunks = search_qdrant(question)
 
         answer = ask_ai(question, relevants_chunks, speech_file_path)
-        autoplay_audio(speech_file_path)
+        autoplay_audio_with_bubble(speech_file_path)
 
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
