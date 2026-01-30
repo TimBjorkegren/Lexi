@@ -1,0 +1,7 @@
+streamlit
+openai>=1.0.0
+PyPDF2
+python-docx
+numpy
+python-dotenv
+qdrant-client
