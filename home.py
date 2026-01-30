@@ -277,7 +277,7 @@ if uploaded_file:
         st.session_state.chat_history.append({"user": question, "bot": answer})
 
 
-# CSS för chattruta
+# CSS för chattruta -
 st.markdown(
     """
     <style>
@@ -320,3 +320,4 @@ for chat in st.session_state.chat_history:
     chat_html += f'<div class="bot-msg"><strong>Lexa:</strong> {chat["bot"]}</div>'
 chat_html += '</div>'
 st.markdown(chat_html, unsafe_allow_html=True)
+
