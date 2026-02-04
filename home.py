@@ -24,7 +24,6 @@ qdrant = QdrantClient(
 speech_file_path = "output.wav"
 
 # QDRANT
-
 def does_collection_exist(collection_name):
     collections = qdrant.get_collections().collections
     existing = [c.name for c in collections]
@@ -78,7 +77,6 @@ def search_qdrant(question, collection_name, top_k=5):
     return texts
 
 # FILE
-
 def read_file(file):
     text = ""
     if file.type == "application/pdf":
@@ -95,13 +93,11 @@ def read_file(file):
         st.error("Filformatet stöds inte!")
     return text
 
-
 def chunk_text(text, chunksize=800):
     chunks = []
     for i in range(0, len(text), chunksize):
         chunks.append(text[i:i + chunksize])
     return chunks
-
 
 def create_embeddings(chunks, client):
     embeddings = []
@@ -212,112 +208,71 @@ def ask_ai(question, relevant_chunks, speech_file_path):
     return response_tts
 
 # ---------------------------------UI-----------------------------
-st.title("Dokument chattbott")
-st.write("Ladda upp ett dokument och fråga om innehållet")
+st.set_page_config(page_title="Lexa AI", layout="centered")
 
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "last_audio_bytes" not in st.session_state: st.session_state.last_audio_bytes = None
 if "last_uploaded_collection" not in st.session_state: st.session_state.last_uploaded_collection = None
 
-collections = qdrant.get_collections().collections
-collection_names = [c.name for c in collections if c.name.startswith("doc_")]
+with st.sidebar:
+    st.title("inställningar")
+    role = st.selectbox("AI Role", ["Lärare", "Jurist", "Detektiv", "Sammanfattare"])
 
-uploaded_file = st.file_uploader("Välj fil format", type=["txt", "pdf", "docx"])
-role = st.selectbox("Välj en roll för AI:n", ["Lärare", "Jurist", "Detektiv", "Sammanfattare"])
+    st.divider()
 
-if uploaded_file:
-    document_text = read_file(uploaded_file)
-    chunks = chunk_text(document_text)
-    embeddings = create_embeddings(chunks, client)
-    collection_name = collection_name_from_file(uploaded_file.name)
-    does_collection_exist(collection_name)
-    upload_to_qdrant(chunks, embeddings, collection_name)
+    uploaded_file = st.file_uploader("Välj fil format", type=["txt", "pdf", "docx"])
+    if uploaded_file:
+        with st.spinner("Bearbetar dokument..."):
+            document_text = read_file(uploaded_file)
+            chunks = chunk_text(document_text)
+            embeddings = create_embeddings(chunks, client)
+            collection_name = collection_name_from_file(uploaded_file.name)
+            does_collection_exist(collection_name)
+            upload_to_qdrant(chunks, embeddings, collection_name)
+            st.session_state.last_uploaded_collection = collection_name
+            st.success("Uppladning klar")
 
-    st.session_state.last_uploaded_collection = collection_name
-    st.session_state.chunks = chunks
-    st.session_state.embeddings = embeddings
     
-# SELECTBOX
-    selected_index = 0
-    if st.session_state.last_uploaded_collection in collection_names:
-        selected_index = collection_names.index(st.session_state.last_uploaded_collection)
+    collections = qdrant.get_collections().collections
+    collection_names = [c.name for c in collections if c.name.startswith("doc_")]
+    selected_collection = st.selectbox("Välj dokument", collection_names)
 
-    selected_collection = st.selectbox(
-    "Välj ett dokument som redan är uppladdat",
-    collection_names,
-    index=selected_index,
-    key="selected_collection"
-    )
 
-#AUDIO INPUT
-    audio = st.audio_input("Ställ en fråga genom mikrofon")
-    if audio is not None:
-       current_audio_bytes = audio.getvalue()
+st.title("Lexi")
 
-       if current_audio_bytes != st.session_state.last_audio_bytes:
-           st.session_state.last_audio_bytes = current_audio_bytes
+audio = st.audio_input("Ställ en fråga genom mikrofon")
+if audio and audio.getvalue() != st.session_state.last_audio_bytes:
+    st.session_state.last_audio_bytes = audio.getvalue()
+    if selected_collection:
+        with st.spinner("Tänker..."):
            question = speech_to_text(audio)
            relevant_chunks = search_qdrant(question, selected_collection)
-           answer = ask_ai(question, relevant_chunks, speech_file_path)
-           autoplay_audio_with_bubble(speech_file_path)
+           answer = ask_ai(question, relevant_chunks, role)
+           st.session_state.chat_history.append({"user": question, "bot": answer})
+           st.rerun()
+    else:
+        st.warning("Ladda upp eller välj ett dokument först")      
 
-           st.session_state.chat_history.append(
-               {"user": question, "bot": answer}
-           )
-
-#TEXT INPUT
-    with st.form("ask_form", clear_on_submit=True):
-        question = st.text_input("Ställ en fråga angående dokumentet", key="question_input")
-        send_button = st.form_submit_button("Send")
-
-    if send_button and question:
-        relevants_chunks = search_qdrant(question, selected_collection)
-        answer = ask_ai(question, relevants_chunks, speech_file_path)
-        autoplay_audio_with_bubble(speech_file_path)
-        st.session_state.chat_history.append({"user": question, "bot": answer})
-
-
-# CSS för chattruta -
-st.markdown(
-    """
+st.markdown("""
     <style>
-    .chat-container {
-        border: 2px solid #ccc;
-        border-radius: 10px;
-        padding: 10px;
-        height: 400px;
-        overflow-y: auto;
-        background-color: transparent;
-    }
-    .user-msg {
-        background-color: #555555;
-        color: white;
-        padding: 10px 15px;
-        border-radius: 15px;
-        max-width: 70%;
-        word-wrap: break-word;
-        margin-left: auto;
-        margin-bottom: 10px;
-    }
-    .bot-msg {
-        background-color: #0b3d91;
-        color: white;
-        padding: 10px 15px;
-        border-radius: 15px;
-        max-width: 70%;
-        word-wrap: break-word;
-        margin-right: auto;
-        margin-bottom: 10px;
-    }
+    .user-msg { background-color: #555555; color: white; padding: 10px 15px; border-radius: 15px; margin-bottom: 10px; width: fit-content; margin-left: auto; }
+    .bot-msg { background-color: #0b3d91; color: white; padding: 10px 15px; border-radius: 15px; margin-bottom: 10px; width: fit-content; margin-right: auto; }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
-chat_html = '<div class="chat-container">'
+
 for chat in st.session_state.chat_history:
-    chat_html += f'<div class="user-msg"><strong>You:</strong> {chat["user"]}</div>'
-    chat_html += f'<div class="bot-msg"><strong>Lexa:</strong> {chat["bot"]}</div>'
-chat_html += '</div>'
-st.markdown(chat_html, unsafe_allow_html=True)
+    st.markdown(f'<div class="user-msg"><b>Du:</b> {chat["user"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="bot-msg"><b>Lexa:</b> {chat["bot"]}</div>', unsafe_allow_html=True)
 
+if st.session_state.chat_history:
+    autoplay_audio_with_bubble(speech_file_path)
+
+if question := st.chat_input("Skriv din fråga här"):
+    if selected_collection:
+        relevant_chunks = search_qdrant(question, selected_collection)
+        answer = ask_ai(question, relevant_chunks, role)
+        st.session_state.chat_history.append({"user": question, "bot": answer})
+        st.rerun()
+    else:
+        st.error("Ladda upp ett dokument först")
