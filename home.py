@@ -21,7 +21,6 @@ qdrant = QdrantClient(
     api_key=os.getenv("QDRANT_API_KEY")
 )
 
-speech_file_path = "output.wav"
 
 # QDRANT
 def does_collection_exist(collection_name):
@@ -198,6 +197,8 @@ def ask_ai(question, relevant_chunks, speech_file_path):
 
     response_tts = response.choices[0].message.content
 
+    speech_file_path = "output.wav"
+
     with client.audio.speech.with_streaming_response.create(
     model="gpt-4o-mini-tts",
     voice="coral",
@@ -205,7 +206,7 @@ def ask_ai(question, relevant_chunks, speech_file_path):
     instructions="Speak in a cheerful and positive tone.",
     ) as tts_response:
         tts_response.stream_to_file(speech_file_path)
-    return response_tts
+    return response_tts, speech_file_path
 
 # ---------------------------------UI-----------------------------
 st.set_page_config(page_title="Lexa AI", layout="centered")
@@ -213,6 +214,7 @@ st.set_page_config(page_title="Lexa AI", layout="centered")
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "last_audio_bytes" not in st.session_state: st.session_state.last_audio_bytes = None
 if "last_uploaded_collection" not in st.session_state: st.session_state.last_uploaded_collection = None
+if "current_audio" not in st.session_state: st.session_state.current_audio = None
 
 with st.sidebar:
     st.title("inställningar")
@@ -247,7 +249,8 @@ if audio and audio.getvalue() != st.session_state.last_audio_bytes:
         with st.spinner("Tänker..."):
            question = speech_to_text(audio)
            relevant_chunks = search_qdrant(question, selected_collection)
-           answer = ask_ai(question, relevant_chunks, role)
+           answer, speech_file_path = ask_ai(question, relevant_chunks, role)
+           st.session_state.current_audio = speech_file_path
            st.session_state.chat_history.append({"user": question, "bot": answer})
            st.rerun()
     else:
@@ -266,12 +269,13 @@ for chat in st.session_state.chat_history:
     st.markdown(f'<div class="bot-msg"><b>Lexa:</b> {chat["bot"]}</div>', unsafe_allow_html=True)
 
 if st.session_state.chat_history:
-    autoplay_audio_with_bubble(speech_file_path)
+    autoplay_audio_with_bubble(st.session_state.current_audio)
 
 if question := st.chat_input("Skriv din fråga här"):
     if selected_collection:
         relevant_chunks = search_qdrant(question, selected_collection)
-        answer = ask_ai(question, relevant_chunks, role)
+        answer, speech_file_path = ask_ai(question, relevant_chunks, role)
+        st.session_state.current_audio = speech_file_path
         st.session_state.chat_history.append({"user": question, "bot": answer})
         st.rerun()
     else:
